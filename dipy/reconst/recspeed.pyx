@@ -242,7 +242,7 @@ def local_maxima(double[:] odf, cnp.uint16_t[:, :] edges):
     cdef:
         cnp.ndarray[cnp.npy_intp] wpeak
     wpeak = np.zeros((odf.shape[0],), dtype=np.intp)
-    count = _compare_neighbors(odf, edges, &wpeak[0])
+    count = _compare_neighbors_strict(odf, edges, &wpeak[0])
     if count == -1:
         raise IndexError("Values in edges must be < len(odf)")
     elif count == -2:
@@ -360,6 +360,58 @@ cdef long _compare_neighbors(double[:] odf, cnp.uint16_t[:, :] edges,
 
     return count
 
+@cython.wraparound(False)
+@cython.boundscheck(False)
+cdef long _compare_neighbors_strict(double[:] odf, cnp.uint16_t[:, :] edges,
+                             cnp.npy_intp *wpeak_ptr) noexcept nogil:
+    """Compares every pair of points in edges, requiring strict inequality.
+    
+    A point is considered a peak only if it is strictly greater than ALL its neighbors.
+    """
+    cdef:
+        cnp.npy_intp lenedges = edges.shape[0]
+        cnp.npy_intp lenodf = odf.shape[0]
+        cnp.npy_intp i
+        cnp.uint16_t find0, find1
+        double odf0, odf1
+        long count = 0
+
+    # Initialize all points as potential peaks (1)
+    for i in range(lenodf):
+        wpeak_ptr[i] = 1
+
+    for i in range(lenedges):
+        find0 = edges[i, 0]
+        find1 = edges[i, 1]
+        
+        if find0 >= lenodf or find1 >= lenodf:
+            count = -1
+            break
+            
+        odf0 = odf[find0]
+        odf1 = odf[find1]
+
+        if (odf0 != odf0) or (odf1 != odf1):  # Check for NaN
+            count = -2
+            break
+
+        # If either point is not strictly greater than its neighbor,
+        # mark it as not a peak (-1)
+        if odf0 <= odf1:
+            wpeak_ptr[find0] = -1
+        if odf1 <= odf0:
+            wpeak_ptr[find1] = -1
+
+    if count < 0:
+        return count
+
+    # Count peaks and collect their indices
+    for i in range(lenodf):
+        if wpeak_ptr[i] > 0:
+            wpeak_ptr[count] = i
+            count += 1
+
+    return count
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
